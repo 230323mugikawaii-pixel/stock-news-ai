@@ -1,0 +1,29 @@
+services:
+  - type: background_worker
+    name: poultry-farm-alert-system
+    runtime: python312
+    startCommand: python worker.py
+    autoDeploy: true
+    plan: free
+    
+    envVars:
+      - fromGroup: poultry_farm_alerts
+      
+    healthCheck:
+      path: ""
+      interval: 10
+      timeout: 5
+      protocol: tcp
+      port: 5000
+
+envGroups:
+  - name: poultry_farm_alerts
+    envVars:
+      - key: CHECK_INTERVAL_SECONDS
+        value: "60"
+      - key: GMAIL_CREDENTIALS_JSON
+        isFile: false
+      - key: PUSHOVER_USER_KEY
+        isFile: false
+      - key: PUSHOVER_API_KEY
+        isFile: false
