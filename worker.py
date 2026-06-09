@@ -160,6 +160,31 @@ class GmailMonitor:
         except Exception as e:
             logger.warning(f"Failed to extract message body: {e}")
             return message.get('snippet', '')
+    
+    def send_test_email(self, test_email_to: str) -> bool:
+        """テストメールを送信"""
+        try:
+            from email.mime.text import MIMEText
+            import base64
+            
+            message = MIMEText('これは養鶏場通知システムの動作確認メールです。')
+            message['to'] = test_email_to
+            message['subject'] = '停電 テスト通知'
+            
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            send_message = {'raw': raw_message}
+            
+            self.service.users().messages().send(
+                userId=self.user_id,
+                body=send_message
+            ).execute()
+            
+            logger.info(f"Test email sent to {test_email_to}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to send test email: {e}")
+            return False
 
 
 class PushoverNotifier:
@@ -168,13 +193,16 @@ class PushoverNotifier:
     def __init__(self):
         """Pushover Notifierを初期化"""
         self.api_url = "https://api.pushover.net/1/messages.json"
-        self.user_key = os.getenv('PUSHOVER_USER_KEY')
+        user_keys_str = os.getenv('PUSHOVER_USER_KEY', '')
+        self.user_keys = [key.strip() for key in user_keys_str.split(',') if key.strip()]
         self.api_key = os.getenv('PUSHOVER_API_KEY')
         
-        if not self.user_key or not self.api_key:
+        if not self.user_keys or not self.api_key:
             raise ValueError(
                 "PUSHOVER_USER_KEY and PUSHOVER_API_KEY environment variables must be set"
             )
+        
+        logger.info(f"Initialized Pushover notifier for {len(self.user_keys)} user(s)")
     
     def send_emergency_notification(
         self,
@@ -194,33 +222,51 @@ class PushoverNotifier:
             成功時True、失敗時False
         """
         try:
-            payload = {
-                'user': self.user_key,
-                'token': self.api_key,
-                'title': title,
-                'message': message,
-                'priority': 2,  # Emergency priority
-                'retry': 300,   # Retry every 5 minutes
-                'expire': 3600  # Expire after 1 hour
-            }
+            all_success = True
+            notification_message = message
             
             if email_from:
-                payload['message'] = f"送信元: {email_from}\n\n{message}"
+                notification_message = f"送信元: {email_from}\n\n{message}"
             
-            response = requests.post(self.api_url, data=payload, timeout=10)
+            for user_key in self.user_keys:
+                try:
+                    payload = {
+                        'user': user_key,
+                        'token': self.api_key,
+                        'title': title,
+                        'message': notification_message,
+                        'priority': 2,      # Emergency priority
+                        'retry': 30,        # Retry every 30 seconds
+                        'expire': 21600     # Expire after 6 hours
+                    }
+                    
+                    response = requests.post(self.api_url, data=payload, timeout=10)
+                    
+                    if response.status_code == 200:
+                        logger.info(f"Pushover notification sent to user {user_key}: {title}")
+                    else:
+                        logger.error(
+                            f"Pushover notification failed for user {user_key}: "
+                            f"{response.status_code} - {response.text}"
+                        )
+                        all_success = False
+                        
+                except Exception as e:
+                    logger.error(f"Failed to send notification to user {user_key}: {e}")
+                    all_success = False
             
-            if response.status_code == 200:
-                logger.info(f"Pushover notification sent successfully: {title}")
-                return True
-            else:
-                logger.error(
-                    f"Pushover notification failed: {response.status_code} - {response.text}"
-                )
-                return False
+            return all_success
                 
         except Exception as e:
             logger.error(f"Failed to send Pushover notification: {e}")
             return False
+    
+    def send_test_notification(self) -> bool:
+        """テスト通知を送信"""
+        return self.send_emergency_notification(
+            title="🧪 テスト通知",
+            message="養鶏場通知システムが正常に起動しました。"
+        )
 
 
 class NotificationManager:
@@ -319,6 +365,12 @@ class PoultryFarmAlertSystem:
         self.notifier = PushoverNotifier()
         self.notification_manager = NotificationManager()
         self.check_interval = int(os.getenv('CHECK_INTERVAL_SECONDS', 60))
+        self.alert_enabled = os.getenv('ALERT_ENABLED', 'true').lower() == 'true'
+        self.test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
+        self.test_email_to = os.getenv('TEST_EMAIL_TO', '')
+        
+        logger.info(f"Alert enabled: {self.alert_enabled}")
+        logger.info(f"Test mode: {self.test_mode}")
     
     def check_keywords(self, text: str) -> Optional[str]:
         """
@@ -346,6 +398,11 @@ class PoultryFarmAlertSystem:
         Returns:
             通知を送信したらTrue、そうでなければFalse
         """
+        # 通知が無効になっている場合はスキップ
+        if not self.alert_enabled:
+            logger.info("Alert is disabled, skipping notification")
+            return False
+        
         # 重複通知チェック
         if self.notification_manager.is_already_notified(message_id):
             logger.info(f"Message {message_id} already notified within 24 hours")
@@ -385,7 +442,19 @@ class PoultryFarmAlertSystem:
         logger.info("=" * 60)
         logger.info("Poultry Farm Alert System started")
         logger.info(f"Check interval: {self.check_interval} seconds")
+        logger.info(f"Alert enabled: {self.alert_enabled}")
         logger.info("=" * 60)
+        
+        # テストモード処理
+        if self.test_mode:
+            logger.info("TEST MODE: Sending test notifications...")
+            self.notifier.send_test_notification()
+            
+            if self.test_email_to:
+                logger.info(f"TEST MODE: Sending test email to {self.test_email_to}...")
+                self.gmail_monitor.send_test_email(self.test_email_to)
+            
+            logger.info("TEST MODE: Test notifications sent, system will continue normally")
         
         consecutive_errors = 0
         max_consecutive_errors = 5
