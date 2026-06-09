@@ -2,7 +2,7 @@
 
 ## 🐔 養鶏場用停電・復電通知システム
 
-Gmail APIを使用して停電・復電関連のメールを監視し、Pushover Emergency通知で24時間いつでもアラートを受け取るシステムです。
+Gmail APIを使用して停電・復電関連のメールを監視し、Pushover Emergency通知で24時間いつでもアラートを受け取るシステムです。複数人への同時通知にも対応しています。
 
 ### ✨ 主な機能
 
@@ -16,9 +16,30 @@ Gmail APIを使用して停電・復電関連のメールを監視し、Pushover
   - 異常
   - 電圧
   - 発電機
-- **Emergency通知**: Pushover緊急通知（確認まで繰り返し）
+- **Emergency通知**: Pushover緊急通知（30秒ごとに最大6時間繰り返し）
+- **複数人通知**: カンマ区切りで複数の受信者に通知可能
+- **通知ON/OFF切り替え**: ALERT_ENABLED環境変数で簡単に制御
+- **テストモード**: 起動時に動作確認用テスト通知を送信
 - **重複通知防止**: 同じメールで24時間以内の重複通知なし
 - **ログ記録**: すべての動作をログファイルに記録
+
+---
+
+## ⚠️ 重要な注意事項
+
+### 音量について
+
+**Pushover Emergency通知は、スマートフォンの音量設定に依存します。**
+
+- ✅ スマートフォンの**ボリュームを最大に設定**してください
+- ✅ 静かなモードは解除してください
+- ❌ 50dBなどの固定音量指定はスマートフォン側で保証できません
+- ❌ Pushover側で音量を指定することはできません
+
+**推奨設定:**
+1. スマートフォンの音量を最大に設定
+2. サイレント/マナーモードをOFF
+3. Pushoverアプリの通知設定でサウンドをON
 
 ---
 
@@ -95,7 +116,8 @@ Gmail APIを使用して停電・復電関連のメールを監視し、Pushover
 
 1. Pushover アプリをスマートフォンにインストール（iOS/Android）
 2. Pushover アカウントでログイン
-3. Render から通知が来ることを確認
+3. **スマートフォンの音量を最大に設定**
+4. Render から通知が来ることを確認
 
 ---
 
@@ -112,10 +134,13 @@ Gmail APIを使用して停電・復電関連のメールを監視し、Pushover
 Render Dashboard で「Environment」から以下を追加:
 
 ```
-CHECK_INTERVAL_SECONDS=60
 GMAIL_CREDENTIALS_JSON=<JSONの全文を1行で貼り付け>
+ALERT_ENABLED=true
+TEST_MODE=false
+TEST_EMAIL_TO=
 PUSHOVER_USER_KEY=<Pushover User Key>
 PUSHOVER_API_KEY=<Pushover API Token>
+CHECK_INTERVAL_SECONDS=60
 ```
 
 **GMAIL_CREDENTIALS_JSON の設定方法:**
@@ -124,6 +149,14 @@ PUSHOVER_API_KEY=<Pushover API Token>
 2. 全文をコピー（改行を含む）
 3. Render の環境変数に貼り付け
 4. Render は自動的に改行を処理します
+
+**複数人への通知を設定する場合（PUSHOVER_USER_KEY）:**
+
+```
+PUSHOVER_USER_KEY=user1_key,user2_key,user3_key
+```
+
+カンマ区切りで複数のキーを指定すると、すべてのユーザーに通知が送信されます。
 
 #### 3-3. render.yaml でデプロイ
 
@@ -140,41 +173,108 @@ git push  # render.yaml が自動検出されます
 
 ---
 
-### Step 4: 動作確認
+### Step 4: テストモード で動作確認
 
-#### 4-1. テスト用メール送信
+#### 4-1. テストモードの有効化
 
-監視対象の Gmail に以下の件名でテストメールを送信:
+Render Dashboard で以下の環境変数を設定:
+
+```
+TEST_MODE=true
+TEST_EMAIL_TO=your-email@gmail.com
+```
+
+#### 4-2. Worker を再起動
+
+- Render Dashboard でWorkerを再起動
+- ログに以下が表示されることを確認:
+  ```
+  TEST MODE: Sending test notifications...
+  TEST MODE: Sending test email to your-email@gmail.com
+  TEST MODE: Test notifications sent, system will continue normally
+  ```
+
+#### 4-3. 通知確認
+
+- Pushover アプリでテスト通知を確認
+- Gmailで「停電 テスト通知」メールを確認
+
+#### 4-4. テストモード を無効化
+
+テスト完了後、テストモードをOFFにします:
+
+```
+TEST_MODE=false
+TEST_EMAIL_TO=
+```
+
+Worker を再起動します。
+
+---
+
+### Step 5: 運用開始
+
+#### 5-1. 通知の有効/無効切り替え
+
+**通知を一時的に無効にしたい場合:**
+
+```
+ALERT_ENABLED=false
+```
+
+**通知を再開する場合:**
+
+```
+ALERT_ENABLED=true
+```
+
+環境変数を変更後、Worker を再起動してください。
+
+#### 5-2. 実メールで動作確認
+
+監視対象の Gmail に以下の件名でメールを送信:
 
 ```
 テスト: 停電が発生しました
 ```
 
-#### 4-2. 通知確認
-
-スマートフォンの Pushover アプリで通知を確認してください。
-
-#### 4-3. ログ確認
-
-Render Dashboard で該当 Worker のログを確認:
-- ✅ メール受信検出
-- ✅ キーワード検知
-- ✅ Pushover 通知送信成功
+Pushover アプリで通知を受信することを確認してください。
 
 ---
 
 ## 📋 環境変数リファレンス
 
-| 環境変数名 | 説明 | 例/デフォルト |
-|-----------|------|------------|
-| `GMAIL_CREDENTIALS_JSON` | Google Service Account JSON（1行） | `{"type":"service_account",...}` |
-| `PUSHOVER_USER_KEY` | Pushover ユーザーキー | `u1234567890abcdef` |
-| `PUSHOVER_API_KEY` | Pushover API トークン | `app1234567890abcdef` |
-| `CHECK_INTERVAL_SECONDS` | メール監視の間隔（秒） | `60` |
+| 環境変数名 | 説明 | 例/デフォルト | 必須 |
+|-----------|------|------------|------|
+| `GMAIL_CREDENTIALS_JSON` | Google Service Account JSON（1行） | `{"type":"service_account",...}` | ✅ |
+| `ALERT_ENABLED` | 通知の有効/無効 | `true` または `false` | - |
+| `TEST_MODE` | テストモード有効化 | `true` または `false` | - |
+| `TEST_EMAIL_TO` | テストメール送信先（TEST_MODEがtrueのみ） | メールアドレス | - |
+| `PUSHOVER_USER_KEY` | Pushover ユーザーキー（カンマ区切り対応） | `u1234567890abcdef` | ✅ |
+| `PUSHOVER_API_KEY` | Pushover API トークン | `app1234567890abcdef` | ✅ |
+| `CHECK_INTERVAL_SECONDS` | メール監視の間隔（秒） | `60` | - |
 
 ---
 
-## 🔧 ローカル開発
+## 📊 通知の動作
+
+### Emergency通知の特性
+
+- **Priority**: 2（Emergency）
+- **Retry**: 30秒ごと
+- **Expire**: 6時間後に自動停止
+- **サウンド**: スマートフォン側の設定に従う
+
+**例:** 停電通知が来たら、6時間以内に確認するまで30秒ごとに鳴り続けます。
+
+### 重複通知の防止
+
+- 同じメールIDで24時間以内に複数回の通知は送信されません
+- 別のメールからの通知は24時間以内でも送信されます
+
+---
+
+## 🧪 ローカル開発
 
 ### セットアップ
 
@@ -199,10 +299,10 @@ python worker.py
 
 ---
 
-## 📊 通知ログ
+## 📝 ログファイル
 
 Worker は以下のファイルにログを記録します:
-- `worker.log` - すべての監視動作、通知送信記録
+- `worker.log` - すべての監視動作、通知送信記録、エラー情報
 
 ---
 
@@ -214,6 +314,7 @@ Worker は以下のファイルにログを記録します:
 - `.env` ファイルは `.gitignore` に含めてコミットしないでください
 - サービスアカウントキーはセキュアに管理してください
 - Pushover API キーも秘密情報です
+- Render の環境変数は暗号化されて保存されます
 
 ---
 
@@ -227,27 +328,42 @@ Worker は以下のファイルにログを記録します:
    ```
    エラーメッセージを確認
 
-2. **Gmail API 設定確認**
+2. **スマートフォン設定確認**
+   - 音量が最大か
+   - サイレント/マナーモードがONになっていないか
+   - Pushover アプリが最新版か
+
+3. **Gmail API 設定確認**
    - サービスアカウントが正しく作成されているか
    - Gmail API が有効化されているか
    - 委譲設定が完了しているか
 
-3. **Pushover 設定確認**
+4. **Pushover 設定確認**
    - User Key が正しいか
    - API Token が正しいか
-   - スマートフォンアプリがログイン状態か
+   - Pushover アプリがログイン状態か
 
 ### メール検出されない場合
 
 1. テストメールに[対応キーワード](#-主な機能)が含まれているか確認
 2. メールがアーカイブ/削除されていないか確認
 3. `CHECK_INTERVAL_SECONDS` が適切に設定されているか確認
+4. `ALERT_ENABLED=true` に設定されているか確認
 
 ### "GMAIL_CREDENTIALS_JSON not set" エラー
 
 1. Render Dashboard で環境変数が設定されているか確認
 2. 改行が含まれていないか確認（1行のJSON）
 3. 間違った認証情報ではないか確認
+
+### 複数人に通知されない場合
+
+1. `PUSHOVER_USER_KEY` がカンマ区切りで設定されているか確認
+   ```
+   user1_key,user2_key,user3_key  # 正しい
+   user1_key, user2_key, user3_key # スペース入っていないか確認
+   ```
+2. 各ユーザーキーが正しいか確認
 
 ---
 
@@ -274,4 +390,4 @@ MIT License
 
 ---
 
-**最終更新**: 2026年6月8日
+**最終更新**: 2026年6月9日
